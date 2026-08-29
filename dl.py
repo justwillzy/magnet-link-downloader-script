@@ -24,7 +24,7 @@ def show_inscription():
         print(content.replace("\\033", "\033"))
         time.sleep(2)
     except Exception:
-        pass  # silently skip if unreachable
+        pass  
 
 def parse_magnet(magnet):
     """Pull the info hash and display name out of a magnet link."""
@@ -36,6 +36,50 @@ def parse_magnet(magnet):
         return info_hash, name
     except Exception:
         return None, None
+
+
+def bdecode(data):
+    """Minimal bencode decoder — just enough to read a .torrent name."""
+    def decode(pos):
+        c = data[pos:pos+1]
+        if c == b'd':
+            pos += 1; d = {}
+            while data[pos:pos+1] != b'e':
+                k, pos = decode(pos)
+                v, pos = decode(pos)
+                d[k] = v
+            return d, pos + 1
+        elif c == b'l':
+            pos += 1; lst = []
+            while data[pos:pos+1] != b'e':
+                v, pos = decode(pos); lst.append(v)
+            return lst, pos + 1
+        elif c == b'i':
+            end = data.index(b'e', pos)
+            return int(data[pos+1:end]), end + 1
+        else:
+            sep = data.index(b':', pos)
+            n = int(data[pos:sep]); s = sep + 1
+            return data[s:s+n], s + n
+    return decode(0)[0]
+
+
+def lookup_name(info_hash):
+    """Try to fetch the torrent name from a public lookup service."""
+    for url in [
+        f"https://itorrents.org/torrent/{info_hash}.torrent",
+        f"https://thetorrent.org/{info_hash}.torrent",
+    ]:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                torrent = bdecode(r.read())
+            name = torrent.get(b"info", {}).get(b"name", None)
+            if name:
+                return name.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+    return None
 
 
 def build_from_hash(raw):
@@ -175,17 +219,22 @@ def main():
             if built:
                 magnet = built
                 print(f"\n🔑  {info_hash}")
-                print("📄  (no name — built from info hash)")
+                print("🔍  Looking up name...", end="", flush=True)
+                name = lookup_name(info_hash)
+                if name:
+                    print(f"\r📄  {name}                    ")
+                else:
+                    print(f"\r📄  (name not found — trackers will fill it in)")
                 break
             else:
-                print("❌  Doesn't look like a magnet link or an info hash — paste it again:\n")
+                print("❌  Doesn't look like a magnet link or an info hash, please paste it again:\n")
                 magnet = None
                 continue
 
         # Full magnet link
         info_hash, name = parse_magnet(magnet)
         if not info_hash:
-            print("❌  Looks like a magnet link but something's off — try re-copying it from the source:\n")
+            print("❌  Looks like a magnet link but something's off, try re-copying it from the source:\n")
             magnet = None
             continue
 
