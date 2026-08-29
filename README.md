@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 
 A minimal command-line tool to download any magnet link with a **live, in-place progress bar**. <br>
-Paste a **MAGNET link**, watch it as it downloads and get your files.<br> <br>
+Paste a **MAGNET link** or bare **INFO HASH**, watch it as it downloads and get your files.<br> <br>
 Built as a thin wrapper around `aria2c` so no third-party Python packages needed.
 
 ---
