@@ -179,16 +179,14 @@ Run aria2c directly to see its own error output:
 aria2c --dir ~/downloads --seed-time=0 "magnet:?xt=..."
 ```
 
-**Permission denied on the download directory**
+**Permission denied on the download directory ?**
 ```bash
 chmod 755 ~/downloads
 ```
 
-**Port 16800 already in use**
+**Port 16800 already in use ?** <br>
 Change `RPC_PORT` in `dl.py` to any unused port, e.g. `16801`.
 
 ---
 
 ## License
-
-MIT — do whatever you want with it.
