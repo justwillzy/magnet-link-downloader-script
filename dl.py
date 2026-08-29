@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
 Magnet link downloader with live progress bar.
-Uses aria2c's JSON-RPC — no extra dependencies beyond Python 3.
-
-Usage:
-    python3 dl.py
-    python3 dl.py "magnet:?xt=..."
 """
 import subprocess, sys, os, time, json, urllib.request
 
@@ -15,7 +10,6 @@ RPC_PORT     = 16800                              # internal port (not exposed)
 # ────────────────────────────────────────────────────────
 
 def show_inscription():
-    """Fetch and display the WILLZY inscription from GitHub."""
     url = "https://raw.githubusercontent.com/justwillzy/willzy/main/inscription.txt"
     try:
         with urllib.request.urlopen(url, timeout=3) as r:
