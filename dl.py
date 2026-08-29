@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
 Magnet link downloader with live progress bar.
+Uses aria2c's JSON-RPC, no extra dependencies beyond Python 3.
+
+Usage:
+    python3 dl.py
+    python3 dl.py "magnet:?xt=..."
 """
-import subprocess, sys, os, time, json, urllib.request
+import subprocess, sys, os, time, json, urllib.request, re
+from urllib.parse import parse_qs, urlparse
 
 # ── Config ──────────────────────────────────────────────
 DOWNLOAD_DIR = os.path.expanduser("~/downloads")  # ← change if needed
@@ -19,6 +25,28 @@ def show_inscription():
         time.sleep(2)
     except Exception:
         pass  # silently skip if unreachable
+
+def parse_magnet(magnet):
+    """Pull the info hash and display name out of a magnet link."""
+    try:
+        params = parse_qs(urlparse(magnet).query)
+        xt = params.get("xt", [""])[0]
+        info_hash = xt.split(":")[-1].upper() if "btih:" in xt else None
+        name = params.get("dn", [None])[0]
+        return info_hash, name
+    except Exception:
+        return None, None
+
+
+def build_from_hash(raw):
+    """If the user pasted a bare info hash, construct a minimal magnet link from it."""
+    raw = raw.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):          # 40-char hex
+        return f"magnet:?xt=urn:btih:{raw}", raw.upper()
+    if re.fullmatch(r"[A-Z2-7]{32}", raw, re.IGNORECASE):  # 32-char base32
+        return f"magnet:?xt=urn:btih:{raw}", raw.upper()
+    return None, None
+
 
 def rpc(method, params=None):
     """Hit aria2c's local JSON-RPC endpoint."""
@@ -133,15 +161,38 @@ def watch(proc):
 def main():
     show_inscription()
 
-    # ── Get magnet link ──
-    if len(sys.argv) > 1:
-        magnet = sys.argv[1].strip()
-    else:
-        print("Paste magnet link and press Enter:")
-        magnet = input().strip()
+    # ── Get magnet link or bare info hash ──
+    magnet = sys.argv[1].strip() if len(sys.argv) > 1 else None
 
-    if not magnet.startswith("magnet:"):
-        sys.exit("❌  Doesn't look like a magnet link.")
+    while True:
+        if magnet is None:
+            print("Paste a magnet link or info hash and press Enter:")
+            magnet = input().strip()
+
+        # Bare info hash (40-char hex or 32-char base32)
+        if not magnet.startswith("magnet:"):
+            built, info_hash = build_from_hash(magnet)
+            if built:
+                magnet = built
+                print(f"\n🔑  {info_hash}")
+                print("📄  (no name — built from info hash)")
+                break
+            else:
+                print("❌  Doesn't look like a magnet link or an info hash — paste it again:\n")
+                magnet = None
+                continue
+
+        # Full magnet link
+        info_hash, name = parse_magnet(magnet)
+        if not info_hash:
+            print("❌  Looks like a magnet link but something's off — try re-copying it from the source:\n")
+            magnet = None
+            continue
+
+        print(f"\n🔑  {info_hash}")
+        if name:
+            print(f"📄  {name}")
+        break
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     print(f"\n📂  {DOWNLOAD_DIR}\n")
