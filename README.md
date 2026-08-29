@@ -190,3 +190,6 @@ Change `RPC_PORT` in `dl.py` to any unused port, e.g. `16801`.
 ---
 
 ## License
+MIT - do whatever you want with it <br> <br>
+
+**giving a Star to this repo wud be pretty helpful**
