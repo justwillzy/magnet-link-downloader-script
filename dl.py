@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+    #!/usr/bin/env python3
 """
 Magnet link downloader with live progress bar.
 Uses aria2c's JSON-RPC and no extra dependencies beyond Python 3.
@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 DOWNLOAD_DIR = os.path.expanduser("~/downloads")  
-RPC_PORT     = 16800                              
+RPC_PORT     = 16800                            
 
 
 def show_inscription():
@@ -82,7 +82,7 @@ def lookup_name(info_hash):
 
 def build_from_hash(raw):
     raw = raw.strip()
-    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):         
+    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):        
         return f"magnet:?xt=urn:btih:{raw}", raw.upper()
     if re.fullmatch(r"[A-Z2-7]{32}", raw, re.IGNORECASE): 
         return f"magnet:?xt=urn:btih:{raw}", raw.upper()
@@ -159,7 +159,6 @@ def draw_bar(pct, width=35):
 
 
 def watch(proc, on_prompt=False):
-   
     cols = 100
     if sys.stdout.isatty():
         try:
@@ -167,25 +166,23 @@ def watch(proc, on_prompt=False):
         except OSError:
             pass
 
-    prev_len    = 0
+    prev_len     = 0
     spinner_frames = "|/-\\"
-    frame       = 0
-    prompt_mode = False   
-    queued      = []      
+    frame        = 0
+    hint_shown   = False 
+    queued       = []
 
     while True:
-      
+        # Exit if aria2c has quit
         if proc.poll() is not None:
             break
 
         active = rpc("aria2.tellActive") or []
 
         if not active:
-            # Check for just-completed downloads
             stopped = rpc("aria2.tellStopped", [0, 1]) or []
             if stopped:
                 break
-        
             sp   = spinner_frames[frame % len(spinner_frames)]
             line = f"  {sp}  Waiting for peers / fetching torrent metadata..."
             frame += 1
@@ -199,7 +196,6 @@ def watch(proc, on_prompt=False):
             name  = dl.get("bittorrent", {}).get("info", {}).get("name", "")
 
             if total == 0:
-         
                 sp   = spinner_frames[frame % len(spinner_frames)]
                 line = f"  {sp}  Finding peers...  connected: {peers}"
                 frame += 1
@@ -207,21 +203,19 @@ def watch(proc, on_prompt=False):
             else:
                 pct = done / total * 100
 
-             
+            
                 if done >= total:
-                    bar  = "█" * 35
+                    bar       = "█" * 35
                     done_line = f"  {bar}  100.0%  {fmt_size(total)} / {fmt_size(total)}  ✓"
-                    if prompt_mode:
-                        print(done_line)
-                    else:
-                        print(f"\r{done_line}" + " " * max(0, prev_len - len(done_line)))
+                    print(f"\r{done_line}" + " " * max(0, prev_len - len(done_line)))
                     return queued
             
 
-             
-                if on_prompt and not prompt_mode:
-                    print()         
-                    prompt_mode = True
+         
+                if on_prompt and not hint_shown:
+                    print()   # end the spinner/waiting line cleanly
+                    print("💡  Queue another: just type a link + Enter anytime")
+                    hint_shown = True
 
                 eta  = (total - done) / speed if speed > 0 else 0
                 bar  = draw_bar(pct)
@@ -238,15 +232,15 @@ def watch(proc, on_prompt=False):
 
         line = line[:cols]
 
-        if prompt_mode:
-            pad = " " * max(0, prev_len - len(line))
-            print(line + pad)
-            prev_len = len(line)
+   
+        pad = " " * max(0, prev_len - len(line))
+        sys.stdout.write(f"\r{line + pad}")
+        sys.stdout.flush()
+        prev_len = len(line)
 
-            sys.stdout.write("Add another? Paste link + Enter  /  just Enter to skip: ")
-            sys.stdout.flush()
-
-            ready, _, _ = select.select([sys.stdin], [], [], 5.0)
+       
+        if on_prompt and hint_shown:
+            ready, _, _ = select.select([sys.stdin], [], [], 1.5)
             if ready:
                 raw = sys.stdin.readline().strip()
                 if raw:
@@ -254,19 +248,8 @@ def watch(proc, on_prompt=False):
                     if result:
                         queued.append(result)
                         _, ih, nm = result
-                        print(f"✓  Queued: {nm or ih}  [{len(queued)} waiting]\n")
-                    continue         
-                else:
-                    print()          
-            else:
-                print()              
-
+                        print(f"\n✓  Queued: {nm or ih}  [{len(queued)} waiting]")
         else:
-          
-            pad = " " * max(0, prev_len - len(line))
-            sys.stdout.write(f"\r{line + pad}")
-            sys.stdout.flush()
-            prev_len = len(line)
             time.sleep(1.5)
 
     print()
@@ -281,7 +264,7 @@ def main():
 
     while True:
 
-   
+       
         if first and len(sys.argv) > 1:
             raw   = sys.argv[1].strip()
             first = False
@@ -296,7 +279,6 @@ def main():
         if not result:
             continue
 
-     
         queue = [result]
 
         while queue:
@@ -304,17 +286,19 @@ def main():
 
             print(f"\n📂  {DOWNLOAD_DIR}\n")
 
+           
             cmd = [
                 "aria2c",
                 "--dir",                         DOWNLOAD_DIR,
-                "--seed-time=0",                 
+                "--continue=true",           
+                "--seed-time=0",                
                 "--max-connection-per-server=4",
                 "--split=4",
                 "--bt-enable-lpd=true",
                 "--enable-dht=true",
                 "--enable-rpc=true",
                 f"--rpc-listen-port={RPC_PORT}",
-                "--quiet=true",                 
+                "--quiet=true",              
                 magnet,
             ]
 
@@ -326,7 +310,7 @@ def main():
             print("⬇️   Downloading...  Ctrl+C to cancel\n")
 
             try:
-                time.sleep(1.5)     
+                time.sleep(1.5)      # give aria2c a moment to spin up its RPC server
                 new_items = watch(proc, on_prompt=True)
                 proc.wait()
 
@@ -348,7 +332,7 @@ def main():
                 queue.clear()
                 break
 
- 
+      
         print("\nAll done! Add another download? Press Enter to add  /  any key to exit:")
         if input().strip():
             break
