@@ -5,7 +5,7 @@ Uses aria2c's JSON-RPC, no extra dependencies beyond Python 3.
 
 how to use:
     python3 dl.py
-    python3 dl.py "magnet:?xt=..."
+    python3 dl.py "magnet:?xt=..." 
 """
 import subprocess, sys, os, time, json, urllib.request, re
 from urllib.parse import parse_qs, urlparse
