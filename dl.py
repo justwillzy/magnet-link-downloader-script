@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
 Magnet link downloader with live progress bar.
-Uses aria2c's JSON-RPC, no extra dependencies beyond Python 3.
+Uses aria2c's JSON-RPC and no extra dependencies beyond Python 3.
 
 how to use:
     python3 dl.py
-    python3 dl.py "magnet:?xt=..." 
+    python3 dl.py "magnet:?xt=..."
 """
-import subprocess, sys, os, time, json, urllib.request, re
+import subprocess, sys, os, time, json, urllib.request, re, select
 from urllib.parse import parse_qs, urlparse
 
-DOWNLOAD_DIR = os.path.expanduser("~/downloads") 
-RPC_PORT     = 16800                             
+
+DOWNLOAD_DIR = os.path.expanduser("~/downloads")  
+RPC_PORT     = 16800                              
 
 
 def show_inscription():
-
     url = "https://raw.githubusercontent.com/justwillzy/willzy/main/inscription.txt"
     try:
         with urllib.request.urlopen(url, timeout=3) as r:
@@ -25,8 +25,9 @@ def show_inscription():
         time.sleep(2)
     except Exception:
         pass
+
+
 def parse_magnet(magnet):
-  
     try:
         params = parse_qs(urlparse(magnet).query)
         xt = params.get("xt", [""])[0]
@@ -38,7 +39,6 @@ def parse_magnet(magnet):
 
 
 def bdecode(data):
-
     def decode(pos):
         c = data[pos:pos+1]
         if c == b'd':
@@ -64,7 +64,6 @@ def bdecode(data):
 
 
 def lookup_name(info_hash):
-    
     for url in [
         f"https://itorrents.org/torrent/{info_hash}.torrent",
         f"https://thetorrent.org/{info_hash}.torrent",
@@ -82,17 +81,44 @@ def lookup_name(info_hash):
 
 
 def build_from_hash(raw):
-
     raw = raw.strip()
     if re.fullmatch(r"[0-9a-fA-F]{40}", raw):         
         return f"magnet:?xt=urn:btih:{raw}", raw.upper()
-    if re.fullmatch(r"[A-Z2-7]{32}", raw, re.IGNORECASE):
+    if re.fullmatch(r"[A-Z2-7]{32}", raw, re.IGNORECASE): 
         return f"magnet:?xt=urn:btih:{raw}", raw.upper()
     return None, None
 
 
+def validate_input(raw):
+    raw = raw.strip()
+
+    if not raw.startswith("magnet:"):
+        built, info_hash = build_from_hash(raw)
+        if built:
+            print(f"\n🔑  {info_hash}")
+            print("🔍  Looking up name...", end="", flush=True)
+            name = lookup_name(info_hash)
+            if name:
+                print(f"\r📄  {name}                    ")
+            else:
+                print(f"\r📄  (name not found, trackers will fill it in)")
+            return built, info_hash, name
+        else:
+            print("❌  Doesn't look like a magnet link or an info hash, paste it again:\n")
+            return None
+
+    info_hash, name = parse_magnet(raw)
+    if not info_hash:
+        print("❌  Looks like a magnet link but something's off, try re-copying it from the source:\n")
+        return None
+
+    print(f"\n🔑  {info_hash}")
+    if name:
+        print(f"📄  {name}")
+    return raw, info_hash, name
+
+
 def rpc(method, params=None):
-  
     try:
         payload = json.dumps({
             "jsonrpc": "2.0", "id": "dl",
@@ -132,8 +158,8 @@ def draw_bar(pct, width=35):
     return "█" * filled + "░" * (width - filled)
 
 
-def watch(proc):
-  
+def watch(proc, on_prompt=False):
+   
     cols = 100
     if sys.stdout.isatty():
         try:
@@ -141,26 +167,29 @@ def watch(proc):
         except OSError:
             pass
 
-    prev_len = 0
+    prev_len    = 0
     spinner_frames = "|/-\\"
-    frame = 0
+    frame       = 0
+    prompt_mode = False   
+    queued      = []      
 
     while True:
-        
+      
         if proc.poll() is not None:
             break
 
         active = rpc("aria2.tellActive") or []
 
         if not active:
-          
+            # Check for just-completed downloads
             stopped = rpc("aria2.tellStopped", [0, 1]) or []
             if stopped:
                 break
-           
-            sp = spinner_frames[frame % len(spinner_frames)]
-            line = f"\r  {sp}  Waiting for peers / fetching torrent metadata..."
+        
+            sp   = spinner_frames[frame % len(spinner_frames)]
+            line = f"  {sp}  Waiting for peers / fetching torrent metadata..."
             frame += 1
+
         else:
             dl    = active[0]
             done  = int(dl.get("completedLength", 0))
@@ -170,21 +199,31 @@ def watch(proc):
             name  = dl.get("bittorrent", {}).get("info", {}).get("name", "")
 
             if total == 0:
-          
-                sp = spinner_frames[frame % len(spinner_frames)]
-                line = f"\r  {sp}  Finding peers...  connected: {peers}"
+         
+                sp   = spinner_frames[frame % len(spinner_frames)]
+                line = f"  {sp}  Finding peers...  connected: {peers}"
                 frame += 1
+
             else:
                 pct = done / total * 100
 
-        
+             
                 if done >= total:
-                    print(f"\r  {'█' * 35}  100.0%  {fmt_size(total)} / {fmt_size(total)}  ✓" + " " * 20)
-                    return
-              
+                    bar  = "█" * 35
+                    done_line = f"  {bar}  100.0%  {fmt_size(total)} / {fmt_size(total)}  ✓"
+                    if prompt_mode:
+                        print(done_line)
+                    else:
+                        print(f"\r{done_line}" + " " * max(0, prev_len - len(done_line)))
+                    return queued
+            
 
-                eta = (total - done) / speed if speed > 0 else 0
+             
+                if on_prompt and not prompt_mode:
+                    print()         
+                    prompt_mode = True
 
+                eta  = (total - done) / speed if speed > 0 else 0
                 bar  = draw_bar(pct)
                 stat = (
                     f"  {bar}  {pct:5.1f}%"
@@ -195,137 +234,124 @@ def watch(proc):
                 )
                 if name:
                     stat += f"  │ {name}"
-                line = f"\r{stat}"
+                line = stat
 
         line = line[:cols]
-        padding = " " * max(0, prev_len - len(line))
-        print(line + padding, end="", flush=True)
-        prev_len = len(line)
 
-        time.sleep(1.5)
+        if prompt_mode:
+            pad = " " * max(0, prev_len - len(line))
+            print(line + pad)
+            prev_len = len(line)
 
-    print()  
+            sys.stdout.write("Add another? Paste link + Enter  /  just Enter to skip: ")
+            sys.stdout.flush()
 
-
-def validate_input(raw):
-    raw = raw.strip()
-
-    if not raw.startswith("magnet:"):
-        built, info_hash = build_from_hash(raw)
-        if built:
-            print(f"\n🔑  {info_hash}")
-            print("🔍  Looking up name...", end="", flush=True)
-            name = lookup_name(info_hash)
-            if name:
-                print(f"\r📄  {name}                    ")
+            ready, _, _ = select.select([sys.stdin], [], [], 5.0)
+            if ready:
+                raw = sys.stdin.readline().strip()
+                if raw:
+                    result = validate_input(raw)
+                    if result:
+                        queued.append(result)
+                        _, ih, nm = result
+                        print(f"✓  Queued: {nm or ih}  [{len(queued)} waiting]\n")
+                    continue         
+                else:
+                    print()          
             else:
-                print(f"\r📄  (name not found — trackers will fill it in)")
-            return built, info_hash, name
+                print()              
+
         else:
-            print("❌  Doesn't look like a magnet link or an info hash, paste it again:\n")
-            return None
+          
+            pad = " " * max(0, prev_len - len(line))
+            sys.stdout.write(f"\r{line + pad}")
+            sys.stdout.flush()
+            prev_len = len(line)
+            time.sleep(1.5)
 
-    info_hash, name = parse_magnet(raw)
-    if not info_hash:
-        print("❌  Looks like a magnet link but something's off, try re-copying it from the source:\n")
-        return None
-
-    print(f"\n🔑  {info_hash}")
-    if name:
-        print(f"📄  {name}")
-    return raw, info_hash, name
+    print()
+    return queued
 
 
 def main():
     show_inscription()
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+    first = True
 
-  
-    queue = [] 
+    while True:
 
-    if len(sys.argv) > 1:
-        result = validate_input(sys.argv[1])
-        if result:
-            queue.append(result)
+   
+        if first and len(sys.argv) > 1:
+            raw   = sys.argv[1].strip()
+            first = False
         else:
-            sys.exit(1)
-    else:
-        while True:
-            print("Paste a magnet link or info hash:")
+            first = False
+            print("\nPaste a magnet link or info hash:")
             raw = input().strip()
-
             if not raw:
+                continue
+
+        result = validate_input(raw)
+        if not result:
+            continue
+
+     
+        queue = [result]
+
+        while queue:
+            magnet, info_hash, name = queue.pop(0)
+
+            print(f"\n📂  {DOWNLOAD_DIR}\n")
+
+            cmd = [
+                "aria2c",
+                "--dir",                         DOWNLOAD_DIR,
+                "--seed-time=0",                 
+                "--max-connection-per-server=4",
+                "--split=4",
+                "--bt-enable-lpd=true",
+                "--enable-dht=true",
+                "--enable-rpc=true",
+                f"--rpc-listen-port={RPC_PORT}",
+                "--quiet=true",                 
+                magnet,
+            ]
+
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except FileNotFoundError:
+                sys.exit("❌  aria2c not found. Install it: sudo apt install aria2")
+
+            print("⬇️   Downloading...  Ctrl+C to cancel\n")
+
+            try:
+                time.sleep(1.5)     
+                new_items = watch(proc, on_prompt=True)
+                proc.wait()
+
+                if proc.returncode == 0:
+                    print(f"✅  Done!  Files saved to: {DOWNLOAD_DIR}")
+                else:
+                    print(f"⚠️   aria2c exited with code {proc.returncode}")
+
+                queue.extend(new_items)
+
                 if queue:
-                    break
-                print("❌  Nothing queued yet.\n")
-                continue
+                    next_name = queue[0][2] or queue[0][1]
+                    print(f"\n⏭️   Next: {next_name}\n")
+                    time.sleep(1)
 
-            result = validate_input(raw)
-            if not result:
-                continue
-
-            queue.append(result)
-            print(f"✓  Added  [{len(queue)} in queue]\n")
-
-            print("Add another? Press Enter / any key to start:")
-            if input().strip():
+            except KeyboardInterrupt:
+                print("\n\n⛔  Cancelled.")
+                proc.terminate()
+                queue.clear()
                 break
 
-  
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    print(f"\n📂  {DOWNLOAD_DIR}\n")
-
-    total = len(queue)
-
-    for i, (magnet, info_hash, name) in enumerate(queue):
-
-        if total > 1:
-            label = name or info_hash
-            print(f"  ── [{i+1}/{total}]  {label}\n")
-
-      
-        cmd = [
-            "aria2c",
-            "--dir",                         DOWNLOAD_DIR,
-            "--seed-time=0",              
-            "--max-connection-per-server=4",
-            "--split=4",
-            "--bt-enable-lpd=true",
-            "--enable-dht=true",
-            "--enable-rpc=true",
-            f"--rpc-listen-port={RPC_PORT}",
-            "--quiet=true",                 
-            magnet,
-        ]
-
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except FileNotFoundError:
-            sys.exit("❌  aria2c not found. Install it: sudo apt install aria2")
-
-        print("⬇️   Downloading...  Ctrl+C to cancel\n")
-
-        try:
-            time.sleep(1.5)  
-            watch(proc)
-            proc.wait()
-
-            if proc.returncode == 0:
-                print(f"✅  Done!  Files saved to: {DOWNLOAD_DIR}")
-                if total > 1 and i < total - 1:
-                    next_label = queue[i+1][2] or queue[i+1][1]
-                    print(f"\n⏭️   Next: {next_label}\n")
-                    time.sleep(2)
-            else:
-                print(f"⚠️   aria2c exited with code {proc.returncode}")
-
-        except KeyboardInterrupt:
-            print("\n\n⛔  Cancelled.")
-            proc.terminate()
+ 
+        print("\nAll done! Add another download? Press Enter to add  /  any key to exit:")
+        if input().strip():
             break
-
-    if total > 1:
-        print(f"\n🎉  All {total} downloads complete.")
 
 
 if __name__ == "__main__":
