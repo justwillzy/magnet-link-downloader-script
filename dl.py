@@ -214,7 +214,7 @@ def watch(proc, on_prompt=False):
          
                 if on_prompt and not hint_shown:
                     print()   # end the spinner/waiting line cleanly
-                    print("💡  Queue another: just type a link + Enter anytime")
+                    print("💡  Queue another: just type/paste a link + enter")
                     hint_shown = True
 
                 eta  = (total - done) / speed if speed > 0 else 0
